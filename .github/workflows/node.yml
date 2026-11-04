@@ -1,0 +1,63 @@
+name: tunnel node
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: How long to keep the node running (at most 350)
+        required: true
+        default: "350"
+      chain:
+        description: Start the next node before this one stops, so clients move over without a gap
+        type: boolean
+        default: true
+
+# No concurrency group: during a handover the next node must run beside this one.
+
+permissions:
+  actions: write
+  contents: read
+
+env:
+  # The next node starts this many minutes before the end, and this node takes no new registrations for the last HANDOVER minutes.
+  # HANDOVER is longer than the client's 4-minute refresh, so every client has moved before this node stops.
+  START_NEXT: 8
+  HANDOVER: 6
+
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    # The node stops itself after its -duration; this only catches a hung run.
+    timeout-minutes: 360
+    steps:
+      - name: Download the node
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # GitHub's API fails now and then with a 5xx error, so try a few times.
+          for attempt in 1 2 3; do
+            gh release download --pattern mailbox-tunnel-linux-amd64 --output mailbox-tunnel && break
+            sleep 20
+          done
+          chmod +x mailbox-tunnel
+      - name: Run node
+        env:
+          MAILBOX_DEPLOYMENT_ID: ${{ secrets.MAILBOX_DEPLOYMENT_ID }}
+          MAILBOX_AUTH_KEY: ${{ secrets.MAILBOX_AUTH_KEY }}
+          MAILBOX_NODE_KEY: ${{ secrets.MAILBOX_NODE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MINUTES: ${{ inputs.minutes }}
+          CHAIN: ${{ inputs.chain }}
+        run: |
+          # Shorter chained runs would keep several nodes listening at once, and clients would bounce between them.
+          if [ "$CHAIN" = true ] && [ "$MINUTES" -lt 30 ]; then
+            echo "::error::A chain needs at least 30 minutes per node."
+            exit 1
+          fi
+          if [ "$CHAIN" = true ]; then
+            # The handoff tries a few times for the same reason; the watchdog heals a chain that still breaks.
+            (sleep $(( (MINUTES - START_NEXT) * 60 )) && for attempt in 1 2 3; do gh workflow run node.yml --ref "$GITHUB_REF_NAME" -f minutes="$MINUTES" -f chain=true && break; sleep 20; done) &
+          fi
+          ./mailbox-tunnel -mode node -duration "${MINUTES}m" -handover "${HANDOVER}m"
