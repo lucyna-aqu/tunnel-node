@@ -35,9 +35,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          # The newest release that has the Linux binary; app releases in the same repository may not.
           # GitHub's API fails now and then with a 5xx error, so try a few times.
           for attempt in 1 2 3; do
-            gh release download --pattern mailbox-tunnel-linux-amd64 --output mailbox-tunnel && break
+            tag=$(gh api "repos/$GH_REPO/releases?per_page=30" --jq '[.[] | select(any(.assets[]; .name == "mailbox-tunnel-linux-amd64"))][0].tag_name') &&
+              gh release download "$tag" --pattern mailbox-tunnel-linux-amd64 --output mailbox-tunnel && break
             sleep 20
           done
           chmod +x mailbox-tunnel
