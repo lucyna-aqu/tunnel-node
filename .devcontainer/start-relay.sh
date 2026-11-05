@@ -32,6 +32,9 @@ if [ -s "$binary.new" ]; then
   mv -f "$binary.new" "$binary"
 fi
 pkill -x mailbox-tunnel
-MAILBOX_AUTH_KEY=$MT_RELAY_AUTH_KEY MAILBOX_NODE_KEY=$MT_RELAY_NODE_KEY \
-  setsid nohup "$binary" -mode relay -listen :8080 -deployment "$CODESPACE_NAME-8080.$domain" > /tmp/relay.log 2>&1 < /dev/null &
+export MAILBOX_AUTH_KEY=$MT_RELAY_AUTH_KEY MAILBOX_NODE_KEY=$MT_RELAY_NODE_KEY
+# Codespaces ends what the start command leaves running, so the relay is forked twice and handed to the container's first process.
+# Returning at once still lost the relay in tests, and a short wait before returning kept it.
+( setsid nohup "$binary" -mode relay -listen :8080 -deployment "$CODESPACE_NAME-8080.$domain" > /tmp/relay.log 2>&1 < /dev/null & )
+sleep 5
 echo "Relay started at $CODESPACE_NAME-8080.$domain."
